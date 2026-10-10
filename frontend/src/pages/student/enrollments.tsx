@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { PlusCircle } from "lucide-react";
+import { PlusCircle, ArrowRightLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDeleteButton } from "@/components/confirm-button";
 import {
   Dialog,
   DialogContent,
@@ -32,12 +33,27 @@ import { useEnrollmentStore } from "@/lib/enrollment-store";
 
 export default function StudentEnrollmentsPage() {
   const studentId = useAuthStore((s) => s.studentId);
-  const { students, courses, enrollments, enroll } = useEnrollmentStore();
+  const {
+    students,
+    courses,
+    enrollments,
+    enroll,
+    updateEnrollment,
+    dropEnrollment,
+  } = useEnrollmentStore();
 
   const [open, setOpen] = useState(false);
   const [formCourse, setFormCourse] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const [changeDialogOpen, setChangeDialogOpen] = useState(false);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [newCourseId, setNewCourseId] = useState<string | null>(null);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [changing, setChanging] = useState(false);
+
+  const [dropError, setDropError] = useState<string | null>(null);
 
   const me = students.find((s) => s.studentId === studentId);
   const myEnrollments = enrollments.filter((e) => e.studentId === studentId);
@@ -60,6 +76,15 @@ export default function StudentEnrollmentsPage() {
     }
   };
 
+  const handleChangeDialogOpenChange = (next: boolean) => {
+    setChangeDialogOpen(next);
+    if (!next) {
+      setSelectedCourseId(null);
+      setNewCourseId(null);
+      setChangeError(null);
+    }
+  };
+
   const handleEnroll = async () => {
     if (!studentId || !formCourse) return;
     setSubmitting(true);
@@ -71,6 +96,37 @@ export default function StudentEnrollmentsPage() {
       setServerError((err as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleOpenChangeDialog = (courseId: string) => {
+    setSelectedCourseId(courseId);
+    setNewCourseId(null);
+    setChangeError(null);
+    setChangeDialogOpen(true);
+  };
+
+  const handleChangeCourse = async () => {
+    if (!studentId || !selectedCourseId || !newCourseId) return;
+    setChanging(true);
+    setChangeError(null);
+    try {
+      await updateEnrollment(studentId, selectedCourseId, newCourseId);
+      handleChangeDialogOpenChange(false);
+    } catch (err) {
+      setChangeError((err as Error).message);
+    } finally {
+      setChanging(false);
+    }
+  };
+
+  const handleDrop = async (courseId: string) => {
+    if (!studentId) return;
+    setDropError(null);
+    try {
+      await dropEnrollment(studentId, courseId);
+    } catch (err) {
+      setDropError((err as Error).message);
     }
   };
 
@@ -140,6 +196,12 @@ export default function StudentEnrollmentsPage() {
         </Dialog>
       </div>
 
+      {dropError && (
+        <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+          {dropError}
+        </div>
+      )}
+
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
@@ -148,13 +210,14 @@ export default function StudentEnrollmentsPage() {
               <TableHead>ชื่อวิชา</TableHead>
               <TableHead>ผู้สอน</TableHead>
               <TableHead>วันที่ลงทะเบียน</TableHead>
+              <TableHead className="w-24 text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {myEnrollments.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={4}
+                  colSpan={5}
                   className="h-20 text-center text-muted-foreground"
                 >
                   ยังไม่ได้ลงทะเบียนวิชาใด
@@ -167,11 +230,30 @@ export default function StudentEnrollmentsPage() {
                 <TableRow key={e.courseId}>
                   <TableCell>{e.courseId}</TableCell>
                   <TableCell>{course?.courseTitle ?? "-"}</TableCell>
-                  <TableCell>{course?.instructors.join(", ") || "-"}</TableCell>
+                  <TableCell>
+                    {course?.instructors.join(", ") || "-"}
+                  </TableCell>
                   <TableCell>
                     {e.enrolledAt
                       ? new Date(e.enrolledAt).toLocaleString("th-TH")
                       : "-"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleOpenChangeDialog(e.courseId)}
+                      >
+                        <ArrowRightLeft className="h-4 w-4" />
+                      </Button>
+                      <ConfirmDeleteButton
+                        label={`ยกเลิกการลงทะเบียนวิชา ${e.courseId}`}
+                        title={`ยกเลิกการลงทะเบียน ${e.courseId}?`}
+                        description={`คุณต้องการยกเลิกการลงทะเบียนวิชา ${e.courseId} หรือไม่`}
+                        onConfirm={() => handleDrop(e.courseId)}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               );
@@ -179,6 +261,52 @@ export default function StudentEnrollmentsPage() {
           </TableBody>
         </Table>
       </div>
+
+      <Dialog
+        open={changeDialogOpen}
+        onOpenChange={handleChangeDialogOpenChange}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>เปลี่ยนวิชา {selectedCourseId}</DialogTitle>
+            <DialogDescription>
+              เลือกวิชาใหม่แทนวิชา {selectedCourseId}{" "}
+              (เลือกได้เฉพาะวิชาที่ยังไม่ได้ลงทะเบียน)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="newCourse">วิชาใหม่</Label>
+            <Select
+              items={courseOptions}
+              value={newCourseId}
+              onValueChange={(v) => setNewCourseId(v as string)}
+            >
+              <SelectTrigger id="newCourse" className="w-full">
+                <SelectValue placeholder="เลือกวิชา" />
+              </SelectTrigger>
+              <SelectContent>
+                {courseOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {changeError && (
+            <p className="text-sm text-destructive">{changeError}</p>
+          )}
+          <DialogFooter>
+            <Button
+              disabled={!newCourseId || changing}
+              onClick={handleChangeCourse}
+            >
+              <ArrowRightLeft className="h-4 w-4" />
+              {changing ? "กำลังบันทึก..." : "บันทึก"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
